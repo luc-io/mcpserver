@@ -34,6 +34,10 @@ class MCPAgentClient:
         else:
             raise Exception(f"Error executing command: {response.text}")
     
+    def execute_shell(self, shell_command: str) -> Dict:
+        """Execute a shell command"""
+        return self.execute_command("shell", "execute", {"command": shell_command})
+    
     def get_system_status(self) -> Dict:
         """Get system status"""
         return self.execute_command("system", "status")
@@ -62,9 +66,14 @@ if __name__ == "__main__":
     
     # Example commands
     try:
+        # Execute shell commands
+        print("Changing directory and running script:")
+        result = client.execute_shell("cd /var/www/mcpserver/examples && python3 llm_client.py")
+        print("\nShell Command Result:", json.dumps(result, indent=2))
+        
         # Get system status
         system_status = client.get_system_status()
-        print("System Status:", json.dumps(system_status, indent=2))
+        print("\nSystem Status:", json.dumps(system_status, indent=2))
         
         # List droplets
         droplets = client.list_droplets()
