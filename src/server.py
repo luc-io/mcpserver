@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from typing import Optional
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -22,7 +22,18 @@ class DropletCreate(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "MCP Server is running"}
+    return {
+        "message": "MCP Server is running",
+        "version": "1.1.0",
+        "endpoints": [
+            "/droplets - List all droplets",
+            "/droplets/{id} - Get droplet details",
+            "/droplets/{id}/status - Get droplet status",
+            "/droplets/{id}/power/on - Power on droplet",
+            "/droplets/{id}/power/off - Power off droplet",
+            "/droplets/{id}/reboot - Reboot droplet"
+        ]
+    }
 
 @app.get("/droplets")
 async def list_droplets():
@@ -43,27 +54,30 @@ async def list_droplets():
 
 @app.get("/droplets/{droplet_id}")
 async def get_droplet(droplet_id: int):
-    droplet = do_manager.get_droplet(droplet_id)
-    return {
-        "id": droplet.id,
-        "name": droplet.name,
-        "status": droplet.status,
-        "size": droplet.size_slug,
-        "memory": f"{droplet.memory}MB",
-        "disk": f"{droplet.disk}GB",
-        "vcpus": droplet.vcpus,
-        "ip_address": droplet.ip_address,
-        "region": {
-            "slug": droplet.region['slug'],
-            "name": droplet.region['name']
-        },
-        "image": {
-            "id": droplet.image['id'],
-            "name": droplet.image['name']
-        },
-        "created_at": droplet.created_at,
-        "tags": droplet.tags
-    }
+    try:
+        droplet = do_manager.get_droplet(droplet_id)
+        return {
+            "id": droplet.id,
+            "name": droplet.name,
+            "status": droplet.status,
+            "size": droplet.size_slug,
+            "memory": f"{droplet.memory}MB",
+            "disk": f"{droplet.disk}GB",
+            "vcpus": droplet.vcpus,
+            "ip_address": droplet.ip_address,
+            "region": {
+                "slug": droplet.region['slug'],
+                "name": droplet.region['name']
+            },
+            "image": {
+                "id": droplet.image['id'],
+                "name": droplet.image['name']
+            },
+            "created_at": droplet.created_at,
+            "tags": droplet.tags
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/droplets")
 async def create_droplet(droplet: DropletCreate):
@@ -79,6 +93,45 @@ async def create_droplet(droplet: DropletCreate):
         "status": "creating",
         "size": droplet.size
     }
+
+@app.delete("/droplets/{droplet_id}")
+async def delete_droplet(droplet_id: int):
+    try:
+        do_manager.delete_droplet(droplet_id)
+        return {"message": f"Droplet {droplet_id} deletion initiated"}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/droplets/{droplet_id}/reboot")
+async def reboot_droplet(droplet_id: int):
+    try:
+        do_manager.reboot_droplet(droplet_id)
+        return {"message": f"Droplet {droplet_id} reboot initiated"}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/droplets/{droplet_id}/power/off")
+async def power_off_droplet(droplet_id: int):
+    try:
+        do_manager.power_off_droplet(droplet_id)
+        return {"message": f"Droplet {droplet_id} power off initiated"}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/droplets/{droplet_id}/power/on")
+async def power_on_droplet(droplet_id: int):
+    try:
+        do_manager.power_on_droplet(droplet_id)
+        return {"message": f"Droplet {droplet_id} power on initiated"}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.get("/droplets/{droplet_id}/status")
+async def get_droplet_status(droplet_id: int):
+    try:
+        return do_manager.get_droplet_status(droplet_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
