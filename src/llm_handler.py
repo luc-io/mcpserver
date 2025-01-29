@@ -34,7 +34,7 @@ class LLMHandler:
         """Process a message using Claude and execute any requested functions"""
         try:
             # Prepare system message with available functions
-            system_message = f"""You are an AI assistant with access to these functions:
+            system_prompt = f"""You are an AI assistant with access to these functions:
 
 {self.get_available_functions()}
 
@@ -46,24 +46,22 @@ When a user requests an action that requires one of these functions, format your
 Then wait for the function result before continuing the conversation.
 """
 
-            # Create message history
-            messages = [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": message}
-            ]
-
-            # Get LLM response
+            # Create message for Claude
             response = await self.anthropic.messages.create(
                 model="claude-3-opus-20240229",
                 max_tokens=2048,
-                messages=messages
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": message}
+                ]
             )
 
             # Extract and execute any function calls
-            if "<function_call>" in response.content:
-                start = response.content.index("<function_call>") + len("<function_call>")
-                end = response.content.index("</function_call>")
-                function_data = json.loads(response.content[start:end])
+            content = response.content[0].text
+            if "<function_call>" in content:
+                start = content.index("<function_call>") + len("<function_call>")
+                end = content.index("</function_call>")
+                function_data = json.loads(content[start:end])
                 
                 # Execute function
                 if function_data["name"] in self.functions:
@@ -71,18 +69,21 @@ Then wait for the function result before continuing the conversation.
                     result = await func_info["function"](**function_data.get("parameters", {}))
                     
                     # Get final response with function result
-                    messages.append({"role": "assistant", "content": response.content})
-                    messages.append({"role": "user", "content": f"Function result: {json.dumps(result)}"})
                     final_response = await self.anthropic.messages.create(
                         model="claude-3-opus-20240229",
                         max_tokens=2048,
-                        messages=messages
+                        system=system_prompt,
+                        messages=[
+                            {"role": "user", "content": message},
+                            {"role": "assistant", "content": content},
+                            {"role": "user", "content": f"Function result: {json.dumps(result)}"}
+                        ]
                     )
-                    return final_response.content
+                    return final_response.content[0].text
                 else:
                     return f"Error: Function {function_data['name']} not found"
 
-            return response.content
+            return content
 
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}", exc_info=True)
