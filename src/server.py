@@ -5,11 +5,11 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from typing import Optional
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from .digital_ocean import DigitalOceanManager
-from .auth import get_current_user
-from .monitor import SystemMonitor
-from .agent import AgentManager
-from .telegram_handler import TelegramBot
+from src.digital_ocean import DigitalOceanManager
+from src.auth import get_current_user
+from src.monitor import SystemMonitor
+from src.agent import AgentManager
+from src.telegram_handler import TelegramBot
 import asyncio
 from contextlib import asynccontextmanager
 
