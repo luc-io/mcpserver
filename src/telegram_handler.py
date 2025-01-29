@@ -19,6 +19,7 @@ class TelegramBot:
         self.app = None
 
         # Initialize LLM and tools
+        logger.info("Initializing LLM and tools...")
         self.llm = LLMHandler()
         self.tool_manager = ToolManager(agent_manager)
         self.tool_manager.register_with_llm(self.llm)
@@ -42,11 +43,11 @@ class TelegramBot:
             
             # Start polling in a separate task
             logger.info("Starting polling...")
-            asyncio.create_task(self.app.updater.start_polling())
+            await self.app.updater.start_polling()
             logger.info("Bot startup complete")
             
         except Exception as e:
-            logger.error(f"Error starting Telegram bot: {str(e)}")
+            logger.error(f"Error starting Telegram bot: {str(e)}", exc_info=True)
             raise
 
     async def stop(self):
@@ -58,14 +59,19 @@ class TelegramBot:
 
     def is_user_allowed(self, user_id: int) -> bool:
         """Check if user is allowed to use the bot"""
+        logger.debug(f"Checking if user {user_id} is allowed. Allowed users: {self.allowed_users}")
         return user_id in self.allowed_users
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
+        logger.info(f"Received /start command from user {update.effective_user.id}")
+        
         if not self.is_user_allowed(update.effective_user.id):
+            logger.warning(f"Unauthorized user {update.effective_user.id} tried to use /start")
             await update.message.reply_text("Sorry, you're not authorized to use this bot.")
             return
 
+        logger.info(f"Sending welcome message to user {update.effective_user.id}")
         await update.message.reply_text(
             "👋 Hi! I'm your AI-powered Project Management Assistant.\n\n"
             "I can help you manage your projects using natural language. Just tell me what you want to do!\n\n"
@@ -101,10 +107,12 @@ class TelegramBot:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle natural language messages using LLM"""
         if not self.is_user_allowed(update.effective_user.id):
+            logger.warning(f"Unauthorized user {update.effective_user.id} tried to send message")
             return
 
         user_id = update.effective_user.id
         message = update.message.text
+        logger.info(f"Processing message from user {user_id}: {message}")
 
         try:
             # Send typing action while processing
@@ -112,6 +120,7 @@ class TelegramBot:
             
             # Process message with LLM
             response = await self.llm.process_message(message)
+            logger.debug(f"LLM response: {response}")
             
             # Send response
             if len(response) > 4000:
