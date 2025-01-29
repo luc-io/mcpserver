@@ -30,6 +30,12 @@ class LLMHandler:
             functions_list.append(function_desc)
         return "\n\n".join(functions_list)
 
+    def _serialize_response(self, response):
+        """Convert AgentResponse to dict for JSON serialization"""
+        if hasattr(response, 'dict'):
+            return response.dict()
+        return str(response)
+
     async def process_message(self, message: str, context: Optional[Dict] = None) -> str:
         """Process a message using Claude and execute any requested functions"""
         try:
@@ -44,6 +50,8 @@ When a user requests an action that requires one of these functions, format your
 </function_call>
 
 Then wait for the function result before continuing the conversation.
+
+Available projects are: selfi-bot and selfi-miniapp
 """
 
             # Create message for Claude
@@ -68,6 +76,9 @@ Then wait for the function result before continuing the conversation.
                     func_info = self.functions[function_data["name"]]
                     result = await func_info["function"](**function_data.get("parameters", {}))
                     
+                    # Serialize the result for JSON
+                    serialized_result = self._serialize_response(result)
+                    
                     # Get final response with function result
                     final_response = await self.anthropic.messages.create(
                         model="claude-3-opus-20240229",
@@ -76,7 +87,7 @@ Then wait for the function result before continuing the conversation.
                         messages=[
                             {"role": "user", "content": str(message)},
                             {"role": "assistant", "content": content},
-                            {"role": "user", "content": f"Function result: {json.dumps(result)}"}
+                            {"role": "user", "content": f"Function result: {json.dumps(serialized_result)}"}
                         ]
                     )
                     return final_response.content[0].text
