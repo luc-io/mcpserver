@@ -51,50 +51,22 @@ async def execute_agent_command(
 ):
     """Execute a command through the agent interface"""
     try:
-        response = await agent_manager.execute_command(command)
-        
-        if not response.success:
-            raise HTTPException(status_code=400, detail=response.message)
-        
-        # Execute command based on type
         if command.command_type == "shell":
-            return await agent_manager._execute_shell_command(command)
-        
-        elif command.command_type == "droplet":
-            if command.action == "list":
-                droplets = do_manager.list_droplets()
-                return AgentResponse(
-                    success=True,
-                    message="Droplets listed successfully",
-                    data={
-                        "droplets": [{
-                            "id": d.id,
-                            "name": d.name,
-                            "status": d.status,
-                            "ip_address": d.ip_address
-                        } for d in droplets]
-                    }
-                )
-            elif command.action == "status":
-                droplet_id = command.parameters.get("droplet_id")
-                status = do_manager.get_droplet_status(droplet_id)
-                return AgentResponse(
-                    success=True,
-                    message="Status retrieved successfully",
-                    data={"status": status}
-                )
-        
-        elif command.command_type == "system":
-            if command.action == "status":
-                return AgentResponse(
-                    success=True,
-                    message="System status retrieved successfully",
-                    data=sys_monitor.get_system_stats()
-                )
-        
-        return response
-    except Exception as e:
+            # For shell commands, execute directly
+            response = await agent_manager._execute_shell_command(command)
+            return response.dict()
+            
+        # For other commands, use regular execute_command
+        response = await agent_manager.execute_command(command)
+        return response.dict()
+    
+    except ValueError as e:
+        # Handle validation errors
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Handle other errors
+        print(f"Error executing command: {str(e)}")  # Add logging
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/droplets")
 async def list_droplets(
