@@ -32,20 +32,18 @@ class AgentManager:
         self.projects = {
             "selfi-bot": ProjectConfig(
                 name="selfi-bot",
-                directory="/var/www/selfi-bot",
+                directory="/var/www/selfi-dev/bot",
                 pm2_name="selfi-bot",
                 config_file="config.js"
             ),
             "selfi-miniapp": ProjectConfig(
                 name="selfi-miniapp",
-                directory="/var/www/selfi-miniapp",
+                directory="/var/www/selfi-dev/miniapp",
                 pm2_name="selfi-miniapp"
             )
         }
         
         self.allowed_commands = {
-            "droplet": ["list", "status", "create", "delete", "reboot", "power_on", "power_off"],
-            "system": ["status", "process"],
             "project": ["deploy", "update", "rollback", "restart", "logs", "status", "config"],
             "shell": ["execute"]
         }
@@ -87,8 +85,8 @@ class AgentManager:
             "/var/www/mcpserver",
             "/var/www/mcpserver/examples",
             "/var/www/mcpserver/src",
-            "/var/www/selfi-bot",
-            "/var/www/selfi-miniapp"
+            "/var/www/selfi-dev/bot",
+            "/var/www/selfi-dev/miniapp"
         ]
         
         # Define log file locations
@@ -96,8 +94,8 @@ class AgentManager:
             "/var/www/mcpserver/logs",
             "/var/log/nginx",
             "~/.pm2/logs",
-            "/var/www/selfi-bot/logs",
-            "/var/www/selfi-miniapp/logs"
+            "/var/www/selfi-dev/bot/logs",
+            "/var/www/selfi-dev/miniapp/logs"
         ]
 
     async def _manage_project(self, project_name: str, action: str, parameters: Dict) -> AgentResponse:
@@ -232,10 +230,6 @@ class AgentManager:
             
             # Validate working directory for all commands
             self._validate_directory(cmd_parts)
-            
-            # Special validation for log access
-            if base_cmd in ["cat", "tail"]:
-                self._validate_log_access(cmd_parts)
         
         return True
 
@@ -339,9 +333,6 @@ class AgentManager:
                 "command": shell_command
             }
             
-            # Log execution
-            self._log_execution(command, response_data)
-            
             return AgentResponse(
                 success=process.returncode == 0,
                 message="Command executed successfully" if process.returncode == 0 else "Command failed",
@@ -360,13 +351,3 @@ class AgentManager:
                 message=f"Error executing shell command: {str(e)}",
                 data={"error_type": "execution_error"}
             )
-
-    def _log_execution(self, command: AgentCommand, result: dict):
-        """Log command execution"""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "agent_id": command.agent_id,
-            "command": command.dict(),
-            "result": result
-        }
-        print(f"Agent Log: {json.dumps(log_entry, indent=2)}")
