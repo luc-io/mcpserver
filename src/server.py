@@ -11,6 +11,7 @@ from monitor import SystemMonitor
 from agent import AgentManager
 from telegram_handler import TelegramBot
 import asyncio
+from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(
@@ -26,9 +27,6 @@ logging.getLogger('httpx').setLevel(logging.DEBUG)
 # Load environment variables
 load_dotenv()
 
-# Initialize FastAPI app
-app = FastAPI(title="MCP Server")
-
 # Initialize managers
 do_manager = DigitalOceanManager()
 sys_monitor = SystemMonitor()
@@ -41,15 +39,23 @@ telegram_bot = TelegramBot(
     allowed_users=[int(id.strip()) for id in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",") if id.strip()]
 )
 
-# Start Telegram bot
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
     try:
         logging.info("Starting Telegram bot...")
-        await telegram_bot.start()
+        asyncio.create_task(telegram_bot.start())
         logging.info("Telegram bot started successfully")
     except Exception as e:
         logging.error(f"Failed to start Telegram bot: {str(e)}", exc_info=True)
+    
+    yield
+    
+    # Shutdown
+    logging.info("Shutting down...")
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(title="MCP Server", lifespan=lifespan)
 
 # Health check endpoint
 @app.get("/health")
