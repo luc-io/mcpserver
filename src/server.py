@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from typing import Optional
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -33,7 +33,7 @@ class DropletCreate(BaseModel):
 
 @app.get("/")
 @limiter.limit("60/minute")
-async def root(request):
+async def root(request: Request):
     """Public endpoint with version and available endpoints"""
     return {
         "message": "MCP Server is running",
@@ -53,7 +53,7 @@ async def root(request):
 @app.get("/droplets")
 @limiter.limit("30/minute")
 async def list_droplets(
-    request,
+    request: Request,
     current_user: str = Depends(get_current_user)
 ):
     droplets = do_manager.list_droplets()
@@ -74,7 +74,7 @@ async def list_droplets(
 @app.get("/droplets/{droplet_id}")
 @limiter.limit("30/minute")
 async def get_droplet(
-    request,
+    request: Request,
     droplet_id: int,
     current_user: str = Depends(get_current_user)
 ):
@@ -106,7 +106,7 @@ async def get_droplet(
 @app.post("/droplets")
 @limiter.limit("10/minute")
 async def create_droplet(
-    request,
+    request: Request,
     droplet: DropletCreate,
     current_user: str = Depends(get_current_user)
 ):
@@ -126,7 +126,7 @@ async def create_droplet(
 @app.delete("/droplets/{droplet_id}")
 @limiter.limit("10/minute")
 async def delete_droplet(
-    request,
+    request: Request,
     droplet_id: int,
     current_user: str = Depends(get_current_user)
 ):
@@ -139,7 +139,7 @@ async def delete_droplet(
 @app.post("/droplets/{droplet_id}/reboot")
 @limiter.limit("10/minute")
 async def reboot_droplet(
-    request,
+    request: Request,
     droplet_id: int,
     current_user: str = Depends(get_current_user)
 ):
@@ -152,7 +152,7 @@ async def reboot_droplet(
 @app.post("/droplets/{droplet_id}/power/off")
 @limiter.limit("10/minute")
 async def power_off_droplet(
-    request,
+    request: Request,
     droplet_id: int,
     current_user: str = Depends(get_current_user)
 ):
@@ -165,7 +165,7 @@ async def power_off_droplet(
 @app.post("/droplets/{droplet_id}/power/on")
 @limiter.limit("10/minute")
 async def power_on_droplet(
-    request,
+    request: Request,
     droplet_id: int,
     current_user: str = Depends(get_current_user)
 ):
@@ -178,7 +178,7 @@ async def power_on_droplet(
 @app.get("/droplets/{droplet_id}/status")
 @limiter.limit("30/minute")
 async def get_droplet_status(
-    request,
+    request: Request,
     droplet_id: int,
     current_user: str = Depends(get_current_user)
 ):
@@ -190,7 +190,7 @@ async def get_droplet_status(
 @app.get("/system/status")
 @limiter.limit("30/minute")
 async def get_system_status(
-    request,
+    request: Request,
     current_user: str = Depends(get_current_user)
 ):
     return sys_monitor.get_system_stats()
@@ -198,7 +198,7 @@ async def get_system_status(
 @app.get("/system/process/{pid}")
 @limiter.limit("30/minute")
 async def get_process_info(
-    request,
+    request: Request,
     pid: int,
     current_user: str = Depends(get_current_user)
 ):
