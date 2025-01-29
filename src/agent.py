@@ -28,13 +28,28 @@ class AgentManager:
             "shell": ["execute"]
         }
         
-        # Define base commands and their allowed arguments
+        # Define commands with their full paths and allowed arguments
         self.allowed_shell_commands = {
-            "ls": ["-l", "-a", "-la", "-al"],
-            "cd": [],
-            "python3": ["-m", "-V", "-c"],
-            "pip": ["install", "list", "freeze"],
-            "git": ["pull", "status", "log"]
+            "ls": {
+                "path": "/bin/ls",
+                "args": ["-l", "-a", "-la", "-al", "--color=auto"]
+            },
+            "cd": {
+                "path": "cd",  # built-in shell command
+                "args": []
+            },
+            "python3": {
+                "path": "/usr/bin/python3",
+                "args": ["-m", "-V", "-c"]
+            },
+            "pip": {
+                "path": "/var/www/mcpserver/venv/bin/pip",
+                "args": ["install", "list", "freeze"]
+            },
+            "git": {
+                "path": "/usr/bin/git",
+                "args": ["pull", "status", "log"]
+            }
         }
         
         self.safe_directories = [
@@ -44,20 +59,17 @@ class AgentManager:
         ]
 
     def validate_command(self, command: AgentCommand) -> bool:
-        # Basic command validation
         if command.command_type not in self.allowed_commands:
             raise ValueError(f"Invalid command type: {command.command_type}")
         
         if command.action not in self.allowed_commands[command.command_type]:
             raise ValueError(f"Invalid action for {command.command_type}: {command.action}")
         
-        # Shell command validation
         if command.command_type == "shell":
             shell_command = command.parameters.get("command", "")
             if not shell_command:
                 raise ValueError("Empty shell command")
             
-            # Parse command into parts
             try:
                 cmd_parts = shlex.split(shell_command)
             except Exception as e:
@@ -69,6 +81,14 @@ class AgentManager:
             base_cmd = cmd_parts[0]
             if base_cmd not in self.allowed_shell_commands:
                 raise ValueError(f"Shell command not allowed: {base_cmd}")
+            
+            # Replace command with full path
+            if base_cmd != "cd":  # cd is handled specially
+                command.parameters["command"] = shell_command.replace(
+                    base_cmd,
+                    self.allowed_shell_commands[base_cmd]["path"],
+                    1
+                )
             
             # Validate arguments for specific commands
             if base_cmd == "ls":
@@ -83,9 +103,10 @@ class AgentManager:
 
     def _validate_ls_command(self, cmd_parts: List[str]):
         """Validate ls command and its arguments"""
+        allowed_args = self.allowed_shell_commands["ls"]["args"]
         for arg in cmd_parts[1:]:
             if arg.startswith("-"):
-                if arg not in self.allowed_shell_commands["ls"]:
+                if arg not in allowed_args:
                     raise ValueError(f"Invalid ls argument: {arg}")
             else:
                 # Validate directory argument
@@ -129,6 +150,13 @@ class AgentManager:
                     message=str(e)
                 )
             
+            # Get updated command after validation
+            shell_command = command.parameters["command"]
+            
+            # Set up environment variables
+            env = os.environ.copy()
+            env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            
             # Execute the command
             process = subprocess.run(
                 shell_command,
@@ -136,7 +164,8 @@ class AgentManager:
                 cwd="/var/www/mcpserver",
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env=env
             )
             
             # Prepare response data
