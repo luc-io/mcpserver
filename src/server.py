@@ -19,42 +19,52 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     stream=sys.stdout
 )
+logger = logging.getLogger(__name__)
 
-# Set telegram logging to DEBUG
-logging.getLogger('telegram').setLevel(logging.DEBUG)
-logging.getLogger('httpx').setLevel(logging.DEBUG)
-
-# Load environment variables
-load_dotenv()
-
-# Initialize managers
-do_manager = DigitalOceanManager()
-sys_monitor = SystemMonitor()
-agent_manager = AgentManager()
-
-# Initialize Telegram bot with allowed user IDs
-telegram_bot = TelegramBot(
-    agent_manager,
-    token=os.getenv("TELEGRAM_BOT_TOKEN"),
-    allowed_users=[int(id.strip()) for id in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",") if id.strip()]
-)
+try:
+    # Load environment variables
+    logger.info("Loading environment variables...")
+    load_dotenv()
+    
+    # Initialize managers
+    logger.info("Initializing managers...")
+    do_manager = DigitalOceanManager()
+    sys_monitor = SystemMonitor()
+    agent_manager = AgentManager()
+    
+    # Initialize Telegram bot with allowed user IDs
+    logger.info("Setting up Telegram bot...")
+    telegram_bot = TelegramBot(
+        agent_manager,
+        token=os.getenv("TELEGRAM_BOT_TOKEN"),
+        allowed_users=[int(id.strip()) for id in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",") if id.strip()]
+    )
+except Exception as e:
+    logger.error(f"Error during initialization: {str(e)}", exc_info=True)
+    raise
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     try:
-        logging.info("Starting Telegram bot...")
-        asyncio.create_task(telegram_bot.start())
-        logging.info("Telegram bot started successfully")
+        logger.info("Starting Telegram bot...")
+        await telegram_bot.start()
+        logger.info("Telegram bot started successfully")
     except Exception as e:
-        logging.error(f"Failed to start Telegram bot: {str(e)}", exc_info=True)
+        logger.error(f"Failed to start Telegram bot: {str(e)}", exc_info=True)
+        raise
     
     yield
     
     # Shutdown
-    logging.info("Shutting down...")
+    try:
+        logger.info("Shutting down Telegram bot...")
+        await telegram_bot.stop()
+        logger.info("Telegram bot shut down successfully")
+    except Exception as e:
+        logger.error(f"Error shutting down Telegram bot: {str(e)}", exc_info=True)
 
-# Initialize FastAPI app with lifespan
+# Initialize FastAPI app
 app = FastAPI(title="MCP Server", lifespan=lifespan)
 
 # Health check endpoint
@@ -65,5 +75,9 @@ async def health_check():
 # Endpoint to handle agent commands
 @app.post("/agent/execute")
 async def execute_command(command: dict, current_user = Depends(get_current_user)):
-    result = await agent_manager.execute_command(command)
-    return result.dict()
+    try:
+        result = await agent_manager.execute_command(command)
+        return result.dict()
+    except Exception as e:
+        logger.error(f"Error executing command: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
