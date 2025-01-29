@@ -4,6 +4,7 @@ import json
 import subprocess
 from datetime import datetime
 import os
+import shlex
 
 class AgentCommand(BaseModel):
     command_type: str
@@ -27,9 +28,14 @@ class AgentManager:
             "shell": ["execute"]
         }
         
-        self.allowed_shell_commands = [
-            "ls", "cd", "python3", "pip", "git"
-        ]
+        # Define base commands and their allowed arguments
+        self.allowed_shell_commands = {
+            "ls": ["-l", "-a", "-la", "-al"],
+            "cd": [],
+            "python3": ["-m", "-V", "-c"],
+            "pip": ["install", "list", "freeze"],
+            "git": ["pull", "status", "log"]
+        }
         
         self.safe_directories = [
             "/var/www/mcpserver",
@@ -47,55 +53,63 @@ class AgentManager:
         
         # Shell command validation
         if command.command_type == "shell":
-            shell_cmd = command.parameters.get("command", "").split()[0]
-            if shell_cmd not in self.allowed_shell_commands:
-                raise ValueError(f"Shell command not allowed: {shell_cmd}")
+            shell_command = command.parameters.get("command", "")
+            if not shell_command:
+                raise ValueError("Empty shell command")
             
-            # Validate working directory
-            working_dir = self._extract_working_dir(command.parameters.get("command", ""))
-            if working_dir and not any(working_dir.startswith(safe_dir) for safe_dir in self.safe_directories):
-                raise ValueError(f"Directory not allowed: {working_dir}")
+            # Parse command into parts
+            try:
+                cmd_parts = shlex.split(shell_command)
+            except Exception as e:
+                raise ValueError(f"Invalid shell command format: {str(e)}")
+            
+            if not cmd_parts:
+                raise ValueError("Empty shell command")
+            
+            base_cmd = cmd_parts[0]
+            if base_cmd not in self.allowed_shell_commands:
+                raise ValueError(f"Shell command not allowed: {base_cmd}")
+            
+            # Validate arguments for specific commands
+            if base_cmd == "ls":
+                self._validate_ls_command(cmd_parts)
+            elif base_cmd == "cd":
+                self._validate_cd_command(cmd_parts)
+            
+            # Validate working directory for all commands
+            self._validate_directory(cmd_parts)
         
         return True
 
-    def _extract_working_dir(self, command: str) -> Optional[str]:
-        if "cd" in command:
-            parts = command.split()
-            try:
-                cd_index = parts.index("cd")
-                if len(parts) > cd_index + 1:
-                    return os.path.abspath(parts[cd_index + 1])
-            except ValueError:
-                pass
-        return None
+    def _validate_ls_command(self, cmd_parts: List[str]):
+        """Validate ls command and its arguments"""
+        for arg in cmd_parts[1:]:
+            if arg.startswith("-"):
+                if arg not in self.allowed_shell_commands["ls"]:
+                    raise ValueError(f"Invalid ls argument: {arg}")
+            else:
+                # Validate directory argument
+                abs_path = os.path.abspath(arg)
+                if not any(abs_path.startswith(safe_dir) for safe_dir in self.safe_directories):
+                    raise ValueError(f"Directory not allowed: {arg}")
 
-    async def execute_command(self, command: AgentCommand) -> AgentResponse:
-        try:
-            # Validate the command
-            self.validate_command(command)
-            
-            # Execute based on command type
-            if command.command_type == "shell":
-                return await self._execute_shell_command(command)
-            
-            return AgentResponse(
-                success=True,
-                message=f"Executed {command.command_type}.{command.action}",
-                data={"command": command.dict()}
-            )
-            
-        except ValueError as e:
-            return AgentResponse(
-                success=False,
-                message=str(e),
-                data={"error_type": "validation_error"}
-            )
-        except Exception as e:
-            return AgentResponse(
-                success=False,
-                message=f"Error executing command: {str(e)}",
-                data={"error_type": "execution_error"}
-            )
+    def _validate_cd_command(self, cmd_parts: List[str]):
+        """Validate cd command"""
+        if len(cmd_parts) != 2:
+            raise ValueError("cd command requires exactly one argument")
+        
+        target_dir = cmd_parts[1]
+        abs_path = os.path.abspath(target_dir)
+        if not any(abs_path.startswith(safe_dir) for safe_dir in self.safe_directories):
+            raise ValueError(f"Directory not allowed: {target_dir}")
+
+    def _validate_directory(self, cmd_parts: List[str]):
+        """Validate any directory arguments in the command"""
+        for part in cmd_parts:
+            if os.path.sep in part:
+                abs_path = os.path.abspath(part)
+                if not any(abs_path.startswith(safe_dir) for safe_dir in self.safe_directories):
+                    raise ValueError(f"Path not allowed: {part}")
 
     async def _execute_shell_command(self, command: AgentCommand) -> AgentResponse:
         try:
@@ -104,6 +118,15 @@ class AgentManager:
                 return AgentResponse(
                     success=False,
                     message="No shell command provided"
+                )
+            
+            # Validate command before execution
+            try:
+                self.validate_command(command)
+            except ValueError as e:
+                return AgentResponse(
+                    success=False,
+                    message=str(e)
                 )
             
             # Execute the command
@@ -116,7 +139,7 @@ class AgentManager:
                 timeout=30
             )
             
-            # Prepare response
+            # Prepare response data
             response_data = {
                 "stdout": process.stdout,
                 "stderr": process.stderr,
@@ -147,6 +170,7 @@ class AgentManager:
             )
 
     def _log_execution(self, command: AgentCommand, result: dict):
+        """Log command execution"""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "agent_id": command.agent_id,
@@ -155,3 +179,21 @@ class AgentManager:
         }
         # TODO: Implement proper logging to file
         print(f"Agent Log: {json.dumps(log_entry, indent=2)}")
+
+    async def execute_command(self, command: AgentCommand) -> AgentResponse:
+        """Execute a command"""
+        try:
+            if command.command_type == "shell":
+                return await self._execute_shell_command(command)
+            
+            return AgentResponse(
+                success=True,
+                message=f"Executed {command.command_type}.{command.action}",
+                data={"command": command.dict()}
+            )
+        except Exception as e:
+            return AgentResponse(
+                success=False,
+                message=f"Error executing command: {str(e)}",
+                data={"error_type": "execution_error"}
+            )
