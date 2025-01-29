@@ -17,7 +17,7 @@ do_manager = DigitalOceanManager()
 class DropletCreate(BaseModel):
     name: str
     region: str = "nyc1"
-    size: str = "s-1vcpu-1gb"
+    size: str = "s-1vcpu-512mb-10gb"
     image: str = "ubuntu-20-04-x64"
 
 @app.get("/")
@@ -27,7 +27,19 @@ async def root():
 @app.get("/droplets")
 async def list_droplets():
     droplets = do_manager.list_droplets()
-    return {"droplets": [{"id": d.id, "name": d.name, "status": d.status} for d in droplets]}
+    return {
+        "droplets": [{
+            "id": d.id,
+            "name": d.name,
+            "status": d.status,
+            "size": d.size_slug,
+            "region": d.region['slug'],
+            "ip_address": d.ip_address,
+            "memory": f"{d.memory}MB",
+            "disk": f"{d.disk}GB",
+            "created_at": d.created_at
+        } for d in droplets]
+    }
 
 @app.get("/droplets/{droplet_id}")
 async def get_droplet(droplet_id: int):
@@ -36,9 +48,21 @@ async def get_droplet(droplet_id: int):
         "id": droplet.id,
         "name": droplet.name,
         "status": droplet.status,
+        "size": droplet.size_slug,
+        "memory": f"{droplet.memory}MB",
+        "disk": f"{droplet.disk}GB",
+        "vcpus": droplet.vcpus,
         "ip_address": droplet.ip_address,
-        "region": droplet.region['slug'],
-        "size": droplet.size_slug
+        "region": {
+            "slug": droplet.region['slug'],
+            "name": droplet.region['name']
+        },
+        "image": {
+            "id": droplet.image['id'],
+            "name": droplet.image['name']
+        },
+        "created_at": droplet.created_at,
+        "tags": droplet.tags
     }
 
 @app.post("/droplets")
@@ -52,7 +76,8 @@ async def create_droplet(droplet: DropletCreate):
     return {
         "id": new_droplet.id,
         "name": new_droplet.name,
-        "status": "creating"
+        "status": "creating",
+        "size": droplet.size
     }
 
 if __name__ == "__main__":
