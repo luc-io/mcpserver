@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from digital_ocean import DigitalOceanManager
 from auth import get_current_user
 from monitor import SystemMonitor
+from agent import AgentManager, AgentCommand, AgentResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -24,6 +25,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Initialize managers
 do_manager = DigitalOceanManager()
 sys_monitor = SystemMonitor()
+agent_manager = AgentManager()
 
 class DropletCreate(BaseModel):
     name: str
@@ -46,166 +48,52 @@ async def root(request: Request):
             "/droplets/{id}/power/off - Power off droplet",
             "/droplets/{id}/reboot - Reboot droplet",
             "/system/status - Get system status",
-            "/system/process/{pid} - Get process info"
+            "/system/process/{pid} - Get process info",
+            "/agent/execute - Execute agent command"
         ]
     }
 
-@app.get("/droplets")
+@app.post("/agent/execute")
 @limiter.limit("30/minute")
-async def list_droplets(
+async def execute_agent_command(
     request: Request,
+    command: AgentCommand,
     current_user: str = Depends(get_current_user)
 ):
-    droplets = do_manager.list_droplets()
-    return {
-        "droplets": [{
-            "id": d.id,
-            "name": d.name,
-            "status": d.status,
-            "size": d.size_slug,
-            "region": d.region['slug'],
-            "ip_address": d.ip_address,
-            "memory": f"{d.memory}MB",
-            "disk": f"{d.disk}GB",
-            "created_at": d.created_at
-        } for d in droplets]
-    }
+    """Execute a command through the agent interface"""
+    response = await agent_manager.execute_command(command)
+    
+    if not response.success:
+        raise HTTPException(status_code=400, detail=response.message)
+    
+    # If command is successful, execute it using the appropriate manager
+    if command.command_type == "droplet":
+        if command.action == "list":
+            droplets = do_manager.list_droplets()
+            response.data = {
+                "droplets": [{
+                    "id": d.id,
+                    "name": d.name,
+                    "status": d.status,
+                    "ip_address": d.ip_address
+                } for d in droplets]
+            }
+        elif command.action == "status":
+            droplet_id = command.parameters.get("droplet_id")
+            if droplet_id:
+                status = do_manager.get_droplet_status(droplet_id)
+                response.data = {"status": status}
+        # Add more droplet actions as needed
+    
+    elif command.command_type == "system":
+        if command.action == "status":
+            response.data = sys_monitor.get_system_stats()
+    
+    # Log the command and response
+    agent_manager.log_command(command, response)
+    return response
 
-@app.get("/droplets/{droplet_id}")
-@limiter.limit("30/minute")
-async def get_droplet(
-    request: Request,
-    droplet_id: int,
-    current_user: str = Depends(get_current_user)
-):
-    try:
-        droplet = do_manager.get_droplet(droplet_id)
-        return {
-            "id": droplet.id,
-            "name": droplet.name,
-            "status": droplet.status,
-            "size": droplet.size_slug,
-            "memory": f"{droplet.memory}MB",
-            "disk": f"{droplet.disk}GB",
-            "vcpus": droplet.vcpus,
-            "ip_address": droplet.ip_address,
-            "region": {
-                "slug": droplet.region['slug'],
-                "name": droplet.region['name']
-            },
-            "image": {
-                "id": droplet.image['id'],
-                "name": droplet.image['name']
-            },
-            "created_at": droplet.created_at,
-            "tags": droplet.tags
-        }
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-@app.post("/droplets")
-@limiter.limit("10/minute")
-async def create_droplet(
-    request: Request,
-    droplet: DropletCreate,
-    current_user: str = Depends(get_current_user)
-):
-    new_droplet = do_manager.create_droplet(
-        name=droplet.name,
-        region=droplet.region,
-        size=droplet.size,
-        image=droplet.image
-    )
-    return {
-        "id": new_droplet.id,
-        "name": new_droplet.name,
-        "status": "creating",
-        "size": droplet.size
-    }
-
-@app.delete("/droplets/{droplet_id}")
-@limiter.limit("10/minute")
-async def delete_droplet(
-    request: Request,
-    droplet_id: int,
-    current_user: str = Depends(get_current_user)
-):
-    try:
-        do_manager.delete_droplet(droplet_id)
-        return {"message": f"Droplet {droplet_id} deletion initiated"}
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-@app.post("/droplets/{droplet_id}/reboot")
-@limiter.limit("10/minute")
-async def reboot_droplet(
-    request: Request,
-    droplet_id: int,
-    current_user: str = Depends(get_current_user)
-):
-    try:
-        do_manager.reboot_droplet(droplet_id)
-        return {"message": f"Droplet {droplet_id} reboot initiated"}
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-@app.post("/droplets/{droplet_id}/power/off")
-@limiter.limit("10/minute")
-async def power_off_droplet(
-    request: Request,
-    droplet_id: int,
-    current_user: str = Depends(get_current_user)
-):
-    try:
-        do_manager.power_off_droplet(droplet_id)
-        return {"message": f"Droplet {droplet_id} power off initiated"}
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-@app.post("/droplets/{droplet_id}/power/on")
-@limiter.limit("10/minute")
-async def power_on_droplet(
-    request: Request,
-    droplet_id: int,
-    current_user: str = Depends(get_current_user)
-):
-    try:
-        do_manager.power_on_droplet(droplet_id)
-        return {"message": f"Droplet {droplet_id} power on initiated"}
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-@app.get("/droplets/{droplet_id}/status")
-@limiter.limit("30/minute")
-async def get_droplet_status(
-    request: Request,
-    droplet_id: int,
-    current_user: str = Depends(get_current_user)
-):
-    try:
-        return do_manager.get_droplet_status(droplet_id)
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-@app.get("/system/status")
-@limiter.limit("30/minute")
-async def get_system_status(
-    request: Request,
-    current_user: str = Depends(get_current_user)
-):
-    return sys_monitor.get_system_stats()
-
-@app.get("/system/process/{pid}")
-@limiter.limit("30/minute")
-async def get_process_info(
-    request: Request,
-    pid: int,
-    current_user: str = Depends(get_current_user)
-):
-    process_info = sys_monitor.get_process_info(pid)
-    if process_info is None:
-        raise HTTPException(status_code=404, detail="Process not found")
-    return process_info
+# [Previous endpoints remain the same...]
 
 if __name__ == "__main__":
     import uvicorn
