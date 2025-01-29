@@ -38,24 +38,41 @@ class AgentManager:
                 "path": "cd",  # built-in shell command
                 "args": []
             },
-            "python3": {
-                "path": "/usr/bin/python3",
-                "args": ["-m", "-V", "-c"]
-            },
-            "pip": {
-                "path": "/var/www/mcpserver/venv/bin/pip",
-                "args": ["install", "list", "freeze"]
-            },
             "git": {
                 "path": "/usr/bin/git",
-                "args": ["pull", "status", "log"]
+                "args": ["pull", "status", "log", "branch", "checkout", "fetch"]
+            },
+            "npm": {
+                "path": "/usr/bin/npm",
+                "args": ["install", "build", "run", "start", "test", "ci"]
+            },
+            "pm2": {
+                "path": "/usr/local/bin/pm2",
+                "args": ["delete", "restart", "logs", "list", "status", "stop", "start"]
+            },
+            "cat": {
+                "path": "/bin/cat",
+                "args": []
+            },
+            "tail": {
+                "path": "/usr/bin/tail",
+                "args": ["-f", "-n"]
             }
         }
         
+        # Define approved project directories
         self.safe_directories = [
             "/var/www/mcpserver",
             "/var/www/mcpserver/examples",
-            "/var/www/mcpserver/src"
+            "/var/www/mcpserver/src",
+            # Add your project directories here
+        ]
+        
+        # Define log file locations
+        self.log_directories = [
+            "/var/www/mcpserver/logs",
+            "/var/log/nginx",
+            "~/.pm2/logs"
         ]
 
     def validate_command(self, command: AgentCommand) -> bool:
@@ -82,55 +99,70 @@ class AgentManager:
             if base_cmd not in self.allowed_shell_commands:
                 raise ValueError(f"Shell command not allowed: {base_cmd}")
             
-            # Replace command with full path
-            if base_cmd != "cd":  # cd is handled specially
+            # Replace command with full path except for cd
+            if base_cmd != "cd":
                 command.parameters["command"] = shell_command.replace(
                     base_cmd,
                     self.allowed_shell_commands[base_cmd]["path"],
                     1
                 )
             
-            # Validate arguments for specific commands
-            if base_cmd == "ls":
-                self._validate_ls_command(cmd_parts)
-            elif base_cmd == "cd":
-                self._validate_cd_command(cmd_parts)
+            # Validate arguments
+            self._validate_command_args(base_cmd, cmd_parts[1:])
             
             # Validate working directory for all commands
             self._validate_directory(cmd_parts)
+            
+            # Special validation for log access
+            if base_cmd in ["cat", "tail"]:
+                self._validate_log_access(cmd_parts)
         
         return True
 
-    def _validate_ls_command(self, cmd_parts: List[str]):
-        """Validate ls command and its arguments"""
-        allowed_args = self.allowed_shell_commands["ls"]["args"]
-        for arg in cmd_parts[1:]:
-            if arg.startswith("-"):
-                if arg not in allowed_args:
-                    raise ValueError(f"Invalid ls argument: {arg}")
-            else:
-                # Validate directory argument
-                abs_path = os.path.abspath(arg)
-                if not any(abs_path.startswith(safe_dir) for safe_dir in self.safe_directories):
-                    raise ValueError(f"Directory not allowed: {arg}")
-
-    def _validate_cd_command(self, cmd_parts: List[str]):
-        """Validate cd command"""
-        if len(cmd_parts) != 2:
-            raise ValueError("cd command requires exactly one argument")
+    def _validate_command_args(self, cmd: str, args: List[str]):
+        """Validate command arguments"""
+        allowed_args = self.allowed_shell_commands[cmd]["args"]
         
-        target_dir = cmd_parts[1]
-        abs_path = os.path.abspath(target_dir)
-        if not any(abs_path.startswith(safe_dir) for safe_dir in self.safe_directories):
-            raise ValueError(f"Directory not allowed: {target_dir}")
+        # Special handling for specific commands
+        if cmd == "pm2":
+            action = args[0] if args else None
+            if action not in allowed_args:
+                raise ValueError(f"Invalid pm2 action: {action}")
+        elif cmd == "npm":
+            action = args[0] if args else None
+            if action not in allowed_args:
+                raise ValueError(f"Invalid npm action: {action}")
+        elif cmd in ["cat", "tail"]:
+            # Will be validated in _validate_log_access
+            pass
+        else:
+            for arg in args:
+                if arg.startswith("-") and arg not in allowed_args:
+                    raise ValueError(f"Invalid argument for {cmd}: {arg}")
+
+    def _validate_log_access(self, cmd_parts: List[str]):
+        """Validate access to log files"""
+        if len(cmd_parts) < 2:
+            raise ValueError("Log file path required")
+        
+        log_path = cmd_parts[-1]
+        abs_path = os.path.abspath(os.path.expanduser(log_path))
+        
+        if not any(abs_path.startswith(os.path.abspath(os.path.expanduser(log_dir))) 
+                  for log_dir in self.log_directories):
+            raise ValueError(f"Access to log file not allowed: {log_path}")
 
     def _validate_directory(self, cmd_parts: List[str]):
-        """Validate any directory arguments in the command"""
+        """Validate directory access"""
         for part in cmd_parts:
             if os.path.sep in part:
-                abs_path = os.path.abspath(part)
-                if not any(abs_path.startswith(safe_dir) for safe_dir in self.safe_directories):
-                    raise ValueError(f"Path not allowed: {part}")
+                abs_path = os.path.abspath(os.path.expanduser(part))
+                if not any(abs_path.startswith(os.path.abspath(safe_dir)) 
+                          for safe_dir in self.safe_directories):
+                    # Check if it's a log file access
+                    if not any(abs_path.startswith(os.path.abspath(os.path.expanduser(log_dir))) 
+                              for log_dir in self.log_directories):
+                        raise ValueError(f"Path not allowed: {part}")
 
     async def _execute_shell_command(self, command: AgentCommand) -> AgentResponse:
         try:
@@ -156,6 +188,7 @@ class AgentManager:
             # Set up environment variables
             env = os.environ.copy()
             env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            env["NODE_ENV"] = "production"  # for npm commands
             
             # Execute the command
             process = subprocess.run(
@@ -164,7 +197,7 @@ class AgentManager:
                 cwd="/var/www/mcpserver",
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=300,  # Extended timeout for npm install/build
                 env=env
             )
             
@@ -188,7 +221,7 @@ class AgentManager:
         except subprocess.TimeoutExpired:
             return AgentResponse(
                 success=False,
-                message="Command timed out after 30 seconds",
+                message="Command timed out after 300 seconds",
                 data={"error_type": "timeout"}
             )
         except Exception as e:
@@ -210,7 +243,6 @@ class AgentManager:
         print(f"Agent Log: {json.dumps(log_entry, indent=2)}")
 
     async def execute_command(self, command: AgentCommand) -> AgentResponse:
-        """Execute a command"""
         try:
             if command.command_type == "shell":
                 return await self._execute_shell_command(command)
