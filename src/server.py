@@ -1,9 +1,14 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from typing import Optional
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from digital_ocean import DigitalOceanManager
+from auth import get_current_user
+from monitor import SystemMonitor
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Load environment variables
 load_dotenv()
@@ -11,8 +16,14 @@ load_dotenv()
 # Initialize FastAPI app
 app = FastAPI(title="MCP Server")
 
-# Initialize DigitalOcean Manager
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Initialize managers
 do_manager = DigitalOceanManager()
+sys_monitor = SystemMonitor()
 
 class DropletCreate(BaseModel):
     name: str
@@ -21,22 +32,30 @@ class DropletCreate(BaseModel):
     image: str = "ubuntu-20-04-x64"
 
 @app.get("/")
-async def root():
+@limiter.limit("60/minute")
+async def root(request):
+    """Public endpoint with version and available endpoints"""
     return {
         "message": "MCP Server is running",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "endpoints": [
             "/droplets - List all droplets",
             "/droplets/{id} - Get droplet details",
             "/droplets/{id}/status - Get droplet status",
             "/droplets/{id}/power/on - Power on droplet",
             "/droplets/{id}/power/off - Power off droplet",
-            "/droplets/{id}/reboot - Reboot droplet"
+            "/droplets/{id}/reboot - Reboot droplet",
+            "/system/status - Get system status",
+            "/system/process/{pid} - Get process info"
         ]
     }
 
 @app.get("/droplets")
-async def list_droplets():
+@limiter.limit("30/minute")
+async def list_droplets(
+    request,
+    current_user: str = Depends(get_current_user)
+):
     droplets = do_manager.list_droplets()
     return {
         "droplets": [{
@@ -53,7 +72,12 @@ async def list_droplets():
     }
 
 @app.get("/droplets/{droplet_id}")
-async def get_droplet(droplet_id: int):
+@limiter.limit("30/minute")
+async def get_droplet(
+    request,
+    droplet_id: int,
+    current_user: str = Depends(get_current_user)
+):
     try:
         droplet = do_manager.get_droplet(droplet_id)
         return {
@@ -80,7 +104,12 @@ async def get_droplet(droplet_id: int):
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/droplets")
-async def create_droplet(droplet: DropletCreate):
+@limiter.limit("10/minute")
+async def create_droplet(
+    request,
+    droplet: DropletCreate,
+    current_user: str = Depends(get_current_user)
+):
     new_droplet = do_manager.create_droplet(
         name=droplet.name,
         region=droplet.region,
@@ -95,7 +124,12 @@ async def create_droplet(droplet: DropletCreate):
     }
 
 @app.delete("/droplets/{droplet_id}")
-async def delete_droplet(droplet_id: int):
+@limiter.limit("10/minute")
+async def delete_droplet(
+    request,
+    droplet_id: int,
+    current_user: str = Depends(get_current_user)
+):
     try:
         do_manager.delete_droplet(droplet_id)
         return {"message": f"Droplet {droplet_id} deletion initiated"}
@@ -103,7 +137,12 @@ async def delete_droplet(droplet_id: int):
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/droplets/{droplet_id}/reboot")
-async def reboot_droplet(droplet_id: int):
+@limiter.limit("10/minute")
+async def reboot_droplet(
+    request,
+    droplet_id: int,
+    current_user: str = Depends(get_current_user)
+):
     try:
         do_manager.reboot_droplet(droplet_id)
         return {"message": f"Droplet {droplet_id} reboot initiated"}
@@ -111,7 +150,12 @@ async def reboot_droplet(droplet_id: int):
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/droplets/{droplet_id}/power/off")
-async def power_off_droplet(droplet_id: int):
+@limiter.limit("10/minute")
+async def power_off_droplet(
+    request,
+    droplet_id: int,
+    current_user: str = Depends(get_current_user)
+):
     try:
         do_manager.power_off_droplet(droplet_id)
         return {"message": f"Droplet {droplet_id} power off initiated"}
@@ -119,7 +163,12 @@ async def power_off_droplet(droplet_id: int):
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.post("/droplets/{droplet_id}/power/on")
-async def power_on_droplet(droplet_id: int):
+@limiter.limit("10/minute")
+async def power_on_droplet(
+    request,
+    droplet_id: int,
+    current_user: str = Depends(get_current_user)
+):
     try:
         do_manager.power_on_droplet(droplet_id)
         return {"message": f"Droplet {droplet_id} power on initiated"}
@@ -127,11 +176,36 @@ async def power_on_droplet(droplet_id: int):
         raise HTTPException(status_code=404, detail=str(e))
 
 @app.get("/droplets/{droplet_id}/status")
-async def get_droplet_status(droplet_id: int):
+@limiter.limit("30/minute")
+async def get_droplet_status(
+    request,
+    droplet_id: int,
+    current_user: str = Depends(get_current_user)
+):
     try:
         return do_manager.get_droplet_status(droplet_id)
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+@app.get("/system/status")
+@limiter.limit("30/minute")
+async def get_system_status(
+    request,
+    current_user: str = Depends(get_current_user)
+):
+    return sys_monitor.get_system_stats()
+
+@app.get("/system/process/{pid}")
+@limiter.limit("30/minute")
+async def get_process_info(
+    request,
+    pid: int,
+    current_user: str = Depends(get_current_user)
+):
+    process_info = sys_monitor.get_process_info(pid)
+    if process_info is None:
+        raise HTTPException(status_code=404, detail="Process not found")
+    return process_info
 
 if __name__ == "__main__":
     import uvicorn
