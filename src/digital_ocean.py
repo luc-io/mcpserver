@@ -1,6 +1,7 @@
 import digitalocean
 from dotenv import load_dotenv
 import os
+import time
 
 class DigitalOceanManager:
     def __init__(self):
@@ -24,3 +25,32 @@ class DigitalOceanManager:
         )
         droplet.create()
         return droplet
+
+    def delete_droplet(self, droplet_id):
+        droplet = self.get_droplet(droplet_id)
+        return droplet.destroy()
+    
+    def reboot_droplet(self, droplet_id):
+        droplet = self.get_droplet(droplet_id)
+        return droplet.reboot()
+    
+    def power_off_droplet(self, droplet_id):
+        droplet = self.get_droplet(droplet_id)
+        return droplet.power_off()
+    
+    def power_on_droplet(self, droplet_id):
+        droplet = self.get_droplet(droplet_id)
+        return droplet.power_on()
+    
+    def get_droplet_status(self, droplet_id):
+        droplet = self.get_droplet(droplet_id)
+        actions = droplet.get_actions()
+        recent_action = actions[0] if actions else None
+        return {
+            "status": droplet.status,
+            "last_action": {
+                "type": recent_action.type if recent_action else None,
+                "status": recent_action.status if recent_action else None,
+                "started_at": recent_action.started_at if recent_action else None
+            }
+        }
