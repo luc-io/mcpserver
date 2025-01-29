@@ -1,14 +1,14 @@
 from typing import Optional, Dict, List
 import os
 import logging
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 import json
 
 logger = logging.getLogger(__name__)
 
 class LLMHandler:
     def __init__(self):
-        self.anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.anthropic = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.context = {}
         self.functions = {}
 
@@ -52,7 +52,7 @@ Then wait for the function result before continuing the conversation.
                 max_tokens=2048,
                 system=system_prompt,
                 messages=[
-                    {"role": "user", "content": message}
+                    {"role": "user", "content": str(message)}
                 ]
             )
 
@@ -74,7 +74,7 @@ Then wait for the function result before continuing the conversation.
                         max_tokens=2048,
                         system=system_prompt,
                         messages=[
-                            {"role": "user", "content": message},
+                            {"role": "user", "content": str(message)},
                             {"role": "assistant", "content": content},
                             {"role": "user", "content": f"Function result: {json.dumps(result)}"}
                         ]
