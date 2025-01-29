@@ -11,6 +11,7 @@ from src.monitor import SystemMonitor
 from src.agent import AgentManager
 from src.telegram_handler import TelegramBot
 import asyncio
+import uvicorn
 from contextlib import asynccontextmanager
 
 # Configure logging
@@ -45,24 +46,23 @@ except Exception as e:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     try:
+        # Startup
         logger.info("Starting Telegram bot...")
         await telegram_bot.start()
         logger.info("Telegram bot started successfully")
+        yield
     except Exception as e:
-        logger.error(f"Failed to start Telegram bot: {str(e)}", exc_info=True)
+        logger.error(f"Failed to start services: {str(e)}", exc_info=True)
         raise
-    
-    yield
-    
-    # Shutdown
-    try:
-        logger.info("Shutting down Telegram bot...")
-        await telegram_bot.stop()
-        logger.info("Telegram bot shut down successfully")
-    except Exception as e:
-        logger.error(f"Error shutting down Telegram bot: {str(e)}", exc_info=True)
+    finally:
+        # Shutdown
+        logger.info("Shutting down services...")
+        try:
+            await telegram_bot.stop()
+            logger.info("Services shut down successfully")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {str(e)}", exc_info=True)
 
 # Initialize FastAPI app
 app = FastAPI(title="MCP Server", lifespan=lifespan)
@@ -81,3 +81,15 @@ async def execute_command(command: dict, current_user = Depends(get_current_user
     except Exception as e:
         logger.error(f"Error executing command: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+def run_server():
+    uvicorn.run(
+        "src.server:app",
+        host=os.getenv("MCP_SERVER_HOST", "157.245.248.36"),
+        port=int(os.getenv("MCP_SERVER_PORT", "8000")),
+        log_level="debug",
+        reload=True
+    )
+
+if __name__ == "__main__":
+    run_server()
