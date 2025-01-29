@@ -6,6 +6,8 @@ import json
 import os
 from datetime import datetime
 import logging
+from .llm_handler import LLMHandler
+from .tool_manager import ToolManager
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,11 @@ class TelegramBot:
         self.token = token
         self.allowed_users = allowed_users
         self.app = None
-        self.suggestions_cache = {}
+
+        # Initialize LLM and tools
+        self.llm = LLMHandler()
+        self.tool_manager = ToolManager(agent_manager)
+        self.tool_manager.register_with_llm(self.llm)
 
     async def start(self):
         """Start the bot"""
@@ -26,9 +32,7 @@ class TelegramBot:
             # Add handlers
             logger.info("Adding command handlers...")
             self.app.add_handler(CommandHandler("start", self.cmd_start))
-            self.app.add_handler(CommandHandler("status", self.cmd_status))
             self.app.add_handler(CommandHandler("help", self.cmd_help))
-            self.app.add_handler(CallbackQueryHandler(self.handle_callback))
             self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
             
             # Initialize the bot
@@ -63,13 +67,15 @@ class TelegramBot:
             return
 
         await update.message.reply_text(
-            "👋 Hi! I'm your Project Management Agent. I can help you manage your projects.\n\n"
+            "👋 Hi! I'm your AI-powered Project Management Assistant.\n\n"
+            "I can help you manage your projects using natural language. Just tell me what you want to do!\n\n"
             "I can:\n"
             "• Check project status\n"
             "• Deploy updates\n"
             "• Monitor logs\n"
-            "• Manage services\n\n"
-            "Send me a message describing what you'd like to do!"
+            "• Manage services\n"
+            "• Answer questions about your projects\n\n"
+            "You can also have a natural conversation with me about your projects!"
         )
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,192 +85,44 @@ class TelegramBot:
 
         help_text = (
             "🤖 Here's what I can help you with:\n\n"
-            "📊 Project Status:\n"
+            "📊 Project Management:\n"
             "- Check project status\n"
-            "- View logs\n"
-            "- Monitor resources\n\n"
-            "🔄 Management:\n"
             "- Update projects\n"
-            "- Restart services\n"
-            "- Deploy changes\n\n"
-            "Just tell me what you want to do in natural language!"
+            "- View logs\n"
+            "- Restart services\n\n"
+            "💬 Natural Interaction:\n"
+            "- Ask questions about your projects\n"
+            "- Get explanations about errors\n"
+            "- Discuss project improvements\n\n"
+            "Just chat with me naturally about what you need!"
         )
         await update.message.reply_text(help_text)
 
-    async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /status command"""
-        if not self.is_user_allowed(update.effective_user.id):
-            return
-
-        try:
-            status_msg = "📊 Current Status:\n\n"
-            
-            for project_name in ["selfi-bot", "selfi-miniapp"]:
-                response = await self.agent.execute_command({
-                    "command_type": "project",
-                    "action": "status",
-                    "parameters": {"project": project_name},
-                    "agent_id": "telegram_bot"
-                })
-                
-                if response.success:
-                    status_msg += f"*{project_name}*:\n"
-                    if hasattr(response.data, 'stdout'):
-                        status = 'online' in response.data.stdout.lower()
-                        status_msg += f"Status: {'✅ Online' if status else '❌ Offline'}\n\n"
-                    else:
-                        status_msg += "Status: ❓ Unknown\n\n"
-                else:
-                    status_msg += f"*{project_name}*: Unable to get status\n\n"
-
-            await update.message.reply_text(status_msg, parse_mode='Markdown')
-            
-        except Exception as e:
-            error_msg = f"Error getting status: {str(e)}"
-            logger.error(error_msg)
-            await update.message.reply_text(error_msg)
-
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle natural language messages"""
+        """Handle natural language messages using LLM"""
         if not self.is_user_allowed(update.effective_user.id):
             return
 
-        message = update.message.text.lower()
-        
-        # Parse intent and generate suggestions
-        suggestions = self.parse_intent(message)
-        
-        if not suggestions:
-            await update.message.reply_text(
-                "I'm not sure what you want to do. Can you be more specific?\n"
-                "You can ask me to:\n"
-                "- Check project status\n"
-                "- View logs\n"
-                "- Restart services\n"
-                "- Update projects"
-            )
-            return
+        user_id = update.effective_user.id
+        message = update.message.text
 
-        # Store suggestions for callback handling
-        self.suggestions_cache[update.effective_user.id] = suggestions
-
-        # Create inline keyboard with suggestions
-        keyboard = []
-        for i, suggestion in enumerate(suggestions):
-            keyboard.append([InlineKeyboardButton(
-                suggestion['description'],
-                callback_data=f"suggestion_{i}"
-            )])
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            "I suggest these actions:",
-            reply_markup=reply_markup
-        )
-
-    def parse_intent(self, message: str) -> List[Dict]:
-        """Parse user message and return suggested actions"""
-        suggestions = []
-        
-        # Status checks
-        if any(word in message for word in ['status', 'health', 'running']):
-            suggestions.append({
-                'description': '📊 Check all project statuses',
-                'command': {
-                    'command_type': 'project',
-                    'action': 'status',
-                    'parameters': {'project': 'all'},
-                }
-            })
-
-        # Log viewing
-        if any(word in message for word in ['log', 'logs', 'error']):
-            for project in ['selfi-bot', 'selfi-miniapp']:
-                if project in message or 'all' in message:
-                    suggestions.append({
-                        'description': f'📋 View {project} logs',
-                        'command': {
-                            'command_type': 'project',
-                            'action': 'logs',
-                            'parameters': {
-                                'project': project,
-                                'lines': '20'
-                            },
-                        }
-                    })
-
-        # Updates and deployment
-        if any(word in message for word in ['update', 'deploy', 'latest']):
-            for project in ['selfi-bot', 'selfi-miniapp']:
-                if project in message or 'all' in message:
-                    suggestions.append({
-                        'description': f'🔄 Update {project}',
-                        'command': {
-                            'command_type': 'project',
-                            'action': 'update',
-                            'parameters': {'project': project},
-                        }
-                    })
-
-        # Restart services
-        if any(word in message for word in ['restart', 'reboot', 'reset']):
-            for project in ['selfi-bot', 'selfi-miniapp']:
-                if project in message or 'all' in message:
-                    suggestions.append({
-                        'description': f'🔄 Restart {project}',
-                        'command': {
-                            'command_type': 'project',
-                            'action': 'restart',
-                            'parameters': {'project': project},
-                        }
-                    })
-
-        return suggestions
-
-    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle button callbacks"""
-        if not self.is_user_allowed(update.effective_user.id):
-            return
-
-        query = update.callback_query
-        await query.answer()
-
-        # Get stored suggestions
-        suggestions = self.suggestions_cache.get(update.effective_user.id, [])
-        if not suggestions:
-            await query.edit_message_text("Sorry, I lost track of the suggestions. Please try again.")
-            return
-
-        # Get selected suggestion
         try:
-            suggestion_index = int(query.data.split('_')[1])
-            suggestion = suggestions[suggestion_index]
-        except (IndexError, ValueError):
-            await query.edit_message_text("Invalid selection. Please try again.")
-            return
-
-        # Execute the command
-        await query.edit_message_text(f"Executing: {suggestion['description']}")
-        response = await self.agent.execute_command(suggestion['command'])
-
-        # Format and send response
-        if response.success:
-            result_msg = f"✅ {suggestion['description']} completed!\n\n"
-            if hasattr(response.data, 'stdout'):
-                # Format the output for Telegram
-                output = response.data.stdout.strip()
-                if len(output) > 1000:
-                    output = output[:997] + "..."
-                if output:
-                    result_msg += f"```\n{output}\n```"
-        else:
-            result_msg = f"❓ {suggestion['description']} failed:\n{response.message}"
-
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=result_msg,
-            parse_mode='Markdown'
-        )
-
-        # Clean up suggestions cache
-        self.suggestions_cache.pop(update.effective_user.id, None)
+            # Send typing action while processing
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+            
+            # Process message with LLM
+            response = await self.llm.process_message(message)
+            
+            # Send response
+            if len(response) > 4000:
+                # Split long messages
+                for i in range(0, len(response), 4000):
+                    chunk = response[i:i + 4000]
+                    await update.message.reply_text(chunk)
+            else:
+                await update.message.reply_text(response)
+                
+        except Exception as e:
+            error_msg = f"Sorry, I encountered an error: {str(e)}"
+            logger.error(f"Error processing message: {str(e)}", exc_info=True)
+            await update.message.reply_text(error_msg)
