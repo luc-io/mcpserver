@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI
-from mcp_python_sdk import MCPServer
+from typing import Optional
+from pydantic import BaseModel
 from dotenv import load_dotenv
 from digital_ocean import DigitalOceanManager
 
@@ -8,13 +9,16 @@ from digital_ocean import DigitalOceanManager
 load_dotenv()
 
 # Initialize FastAPI app
-app = FastAPI()
-
-# Initialize MCP Server
-mcp_server = MCPServer()
+app = FastAPI(title="MCP Server")
 
 # Initialize DigitalOcean Manager
 do_manager = DigitalOceanManager()
+
+class DropletCreate(BaseModel):
+    name: str
+    region: str = "nyc1"
+    size: str = "s-1vcpu-1gb"
+    image: str = "ubuntu-20-04-x64"
 
 @app.get("/")
 async def root():
@@ -38,11 +42,16 @@ async def get_droplet(droplet_id: int):
     }
 
 @app.post("/droplets")
-async def create_droplet(name: str, region: str = "nyc1", size: str = "s-1vcpu-1gb", image: str = "ubuntu-20-04-x64"):
-    droplet = do_manager.create_droplet(name, region, size, image)
+async def create_droplet(droplet: DropletCreate):
+    new_droplet = do_manager.create_droplet(
+        name=droplet.name,
+        region=droplet.region,
+        size=droplet.size,
+        image=droplet.image
+    )
     return {
-        "id": droplet.id,
-        "name": droplet.name,
+        "id": new_droplet.id,
+        "name": new_droplet.name,
         "status": "creating"
     }
 
